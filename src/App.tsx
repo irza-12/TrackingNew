@@ -90,9 +90,12 @@ const emptyForm: FormState = {
 };
 const actualTransactions: FullTransaction[] = Array.from(
   { length: 19 },
-  (_, offset) => {
-    const date = `2026-09-${String(offset + 7).padStart(2, "0")}`;
-    const ricePurchase = offset === 5;
+  (_, offset) => offset + 7,
+)
+  .filter((day) => new Date(2026, 8, day).getDay() !== 0)
+  .map((day) => {
+    const date = `2026-09-${String(day).padStart(2, "0")}`;
+    const ricePurchase = day === 12;
     return [
       {
         id: `kpr-${date}-morning`,
@@ -147,8 +150,8 @@ const actualTransactions: FullTransaction[] = Array.from(
         menuNotes: "Pengantaran harian KPR",
       },
     ];
-  },
-).flat();
+  })
+  .flat();
 
 function netTotal(
   item: Pick<
@@ -312,7 +315,20 @@ function App() {
         if (rowsError) {
           setMessage(`Database: ${rowsError.message}`);
           setTransactions([]);
-        } else if (rows?.length) {
+        } else {
+          const sundayRows = (rows ?? []).filter(
+            (row) => new Date(`${row.date}T00:00:00`).getDay() === 0,
+          );
+          if (sundayRows.length) {
+            await client
+              .from("transactions")
+              .delete()
+              .in("id", sundayRows.map((row) => row.id));
+          }
+          const weekdayRows = (rows ?? []).filter(
+            (row) => new Date(`${row.date}T00:00:00`).getDay() !== 0,
+          );
+          if (weekdayRows.length) {
           const seedKeys = new Set(
             actualTransactions.map(
               (item) => `${item.date}|${item.mealSlot}|${item.vendor}`,
@@ -320,7 +336,7 @@ function App() {
           );
           const seenSeedKeys = new Set<string>();
           const duplicateIds: string[] = [];
-          const existing = rows
+          const existing = weekdayRows
             .map(mapDatabaseTransaction)
             .filter((item) => {
               const key = `${item.date}|${item.mealSlot}|${item.vendor}`;
@@ -357,7 +373,7 @@ function App() {
               );
             }
           } else setTransactions(existing);
-        } else {
+          } else {
           const payload = actualTransactions.map((item) =>
             toDatabaseTransaction(item, user.id),
           );
@@ -371,6 +387,7 @@ function App() {
           } else if (seeded.data?.length)
             setTransactions(seeded.data.map(mapDatabaseTransaction));
           else setTransactions(actualTransactions);
+        }
         }
         transactionChannel = client
           .channel(`transactions:${user.id}`)
